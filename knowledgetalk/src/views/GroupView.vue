@@ -11,20 +11,36 @@
       <button :disabled="!ready || creating || joined" @click="createVideoRoom">
         CreateVideoRoom
       </button>
-      <button :disabled="!ready || joining || joined" @click="joinRoom">
+
+      <button :disabled="!ready || joining || joined" @click="joinRoom()">
         JoinRoom
       </button>
 
-      <!-- 테스트용 수동 Group 연결 버튼 -->
-      <button :disabled="!ready || !joined || publishing" @click="publish">
-        Publish(수동)
+      <button :disabled="!ready || !joined || sharing" @click="startScreenShare">
+        화면 공유
+      </button>
+
+      <button :disabled="!ready || !joined || !sharing" @click="stopScreenShare">
+        공유 종료
       </button>
     </div>
 
     <div id="videoBox">
-      <div v-for="id in videoIds" :key="id" class="multiVideo" :id="id">
-        <p>{{ id }}</p>
-        <video :id="`multiVideo-${id}`" autoplay playsinline></video>
+      <div v-for="id in userIds" :key="id" class="multiVideo">
+        <p class="userLabel">{{ id }}</p>
+
+        <div class="videoRow">
+          <div class="videoCol">
+            <p class="subLabel">CAM</p>
+            <video :id="`camVideo-${id}`" autoplay playsinline></video>
+          </div>
+
+          <div class="videoCol">
+            <p class="subLabel">SCREEN</p>
+            <video :id="`screenVideo-${id}`" autoplay playsinline></video>
+            <canvas :id="`screenCanvas-${id}`" class="screenCanvas"></canvas>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -52,65 +68,110 @@ const ready = ref(false);
 const joined = ref(false);
 const creating = ref(false);
 const joining = ref(false);
-const publishing = ref(false);
+const sharing = ref(false);
 
-const videoIds = ref([]);
+const userIds = ref([]);
 const logs = ref([]);
 
 let kt = null;
 let presenceHandler = null;
 
-let localStream = null;
+let localCamStream = null;
+let localScreenStream = null;
 
-let publishedOnce = false;
+let publishedCamOnce = false;
+
+const subscribed = new Set();
 
 const log = (type, obj) => {
   const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
   logs.value.push({ type, text });
 };
 
-const ensureVideoBox = (id) => {
+const ensureUser = (id) => {
   if (!id) return;
-  if (!videoIds.value.includes(id)) videoIds.value.push(id);
+  if (!userIds.value.includes(id)) userIds.value.push(id);
 };
 
-const removeVideoBox = (id) => {
-  videoIds.value = videoIds.value.filter((x) => x !== id);
+const removeUser = (id) => {
+  userIds.value = userIds.value.filter((x) => x !== id);
+  subscribed.delete(`cam:${id}`);
+  subscribed.delete(`screen:${id}`);
 };
 
-const setVideoStream = async (userId, stream) => {
-  ensureVideoBox(userId);
+const setCamStream = async (id, stream) => {
+  ensureUser(id);
   await nextTick();
-
-  const el = document.getElementById(`multiVideo-${userId}`);
+  const el = document.getElementById(`camVideo-${id}`);
   if (!el) return;
   el.srcObject = stream;
 };
 
-const startLocalCameraIfNeeded = async () => {
-  if (localStream) return localStream;
+const setScreenStream = async (id, stream) => {
+  ensureUser(id);
+  await nextTick();
+  const el = document.getElementById(`screenVideo-${id}`);
+  if (!el) return;
+  el.srcObject = stream;
+};
 
-  localStream = await navigator.mediaDevices.getUserMedia({
+const clearScreenVideo = async (id) => {
+  await nextTick();
+  const el = document.getElementById(`screenVideo-${id}`);
+  if (el) el.srcObject = null;
+};
+
+const getMyCanvas = () => {
+  const me = kt?.getUserId?.();
+  if (!me) return undefined;
+  return document.getElementById(`screenCanvas-${me}`) || undefined;
+};
+
+const startLocalCamIfNeeded = async () => {
+  if (localCamStream) return localCamStream;
+
+  localCamStream = await navigator.mediaDevices.getUserMedia({
     video: { width: 640, height: 380 },
     audio: false
   });
 
   const me = kt.getUserId();
-  await setVideoStream(me, localStream); // ✅ 내 카메라 즉시 표시
-  return localStream;
+  await setCamStream(me, localCamStream);
+  return localCamStream;
 };
 
-const autoPublishIfNeeded = async () => {
+const publishMyCamIfNeeded = async () => {
   if (!joined.value) return;
-  if (publishedOnce) return;
+  if (publishedCamOnce) return;
 
-  await startLocalCameraIfNeeded();
-  const ok = await kt.publishVideo("cam", localStream);
+  await startLocalCamIfNeeded();
+  const ok = await kt.publishVideo("cam", localCamStream);
   if (!ok) {
-    alert("publish video failed!");
+    alert("publishVideo(cam) failed!");
     return;
   }
-  publishedOnce = true;
+  publishedCamOnce = true;
+};
+
+const subscribeFeed = async (feed) => {
+  if (!feed?.id || !feed?.type) return;
+
+  const key = `${feed.type}:${feed.id}`;
+  if (subscribed.has(key)) return;
+  subscribed.add(key);
+
+  try {
+    const stream = await kt.subscribeVideo(feed.id, feed.type);
+
+    if (feed.type === "cam") {
+      await setCamStream(feed.id, stream);
+    } else if (feed.type === "screen") {
+      await setScreenStream(feed.id, stream);
+    }
+  } catch (e) {
+    subscribed.delete(key);
+    console.error("subscribeVideo failed", feed, e);
+  }
 };
 
 onMounted(async () => {
@@ -118,10 +179,7 @@ onMounted(async () => {
     kt = createKT();
 
     const result = await kt.init(cpCode, authKey);
-    if (result.code !== "200") {
-      alert("init failed!");
-      return;
-    }
+    if (result.code !== "200") return alert("init failed!");
     ready.value = true;
 
     presenceHandler = async (event) => {
@@ -130,28 +188,44 @@ onMounted(async () => {
 
       switch (msg.type) {
         case "join": {
-          const joinedUserId = msg?.user?.id || msg?.user?.userId || msg?.user;
-          ensureVideoBox(joinedUserId);
+          const uid = msg?.user?.id || msg?.user?.userId || msg?.user;
+          if (uid) ensureUser(uid);
           break;
         }
 
         case "leave": {
-          const leftUserId =
+          const uid =
             typeof msg.user === "string"
               ? msg.user
               : msg?.user?.id || msg?.user?.userId;
 
-          removeVideoBox(leftUserId);
+          if (uid) {
+            removeUser(uid);
+            await clearScreenVideo(uid);
+          }
           break;
         }
 
         case "publish": {
-          for (const feed of msg.feeds || []) {
-            const stream = await kt.subscribeVideo(feed.id, feed.type);
-            await setVideoStream(feed.id, stream);
+          const feeds = msg.feeds || [];
+          for (const feed of feeds) {
+            if (feed?.id) ensureUser(feed.id);
+            await subscribeFeed(feed);
           }
           break;
         }
+
+        case "shareStop": {
+          const sender = msg.sender || msg.user;
+          if (sender) {
+            subscribed.delete(`screen:${sender}`);
+            await clearScreenVideo(sender);
+          }
+          break;
+        }
+
+        default:
+          break;
       }
     };
 
@@ -162,15 +236,22 @@ onMounted(async () => {
   }
 });
 
-onBeforeUnmount(() => {
+onBeforeUnmount(async () => {
   try {
     if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
   } catch (_) {}
 
   try {
-    if (localStream) {
-      localStream.getTracks().forEach((t) => t.stop());
-      localStream = null;
+    if (localCamStream) {
+      localCamStream.getTracks().forEach((t) => t.stop());
+      localCamStream = null;
+    }
+  } catch (_) {}
+
+  try {
+    if (localScreenStream) {
+      localScreenStream.getTracks().forEach((t) => t.stop());
+      localScreenStream = null;
     }
   } catch (_) {}
 });
@@ -178,50 +259,92 @@ onBeforeUnmount(() => {
 const createVideoRoom = async () => {
   creating.value = true;
   try {
-    const roomData = await kt.createVideoRoom();
-    if (roomData.code !== "200") return alert("createVideoRoom failed!");
-    roomId.value = roomData.roomId;
-
-    await joinRoom();
+    const res = await kt.createVideoRoom();
+    if (res.code !== "200") return alert("createVideoRoom failed!");
+    roomId.value = res.roomId;
+    await joinRoom(res.roomId);
   } finally {
     creating.value = false;
   }
 };
 
-const joinRoom = async () => {
-  if (!roomId.value.trim()) {
+const joinRoom = async (overrideRoomId) => {
+  const ridFromArg =
+    typeof overrideRoomId === "string" ? overrideRoomId.trim() : "";
+
+  let rid = ridFromArg || roomId.value.trim();
+
+  if (!rid) {
     const input = prompt("입장할 roomId를 입력하세요.");
     if (!input) return;
-    roomId.value = input.trim();
+    rid = input.trim();
+    roomId.value = rid;
   }
 
   joining.value = true;
   try {
-    const roomData = await kt.joinRoom(roomId.value.trim());
+    const roomData = await kt.joinRoom(rid);
     if (roomData.code !== "200") return alert("joinRoom failed!");
 
     joined.value = true;
 
+    ensureUser(kt.getUserId());
+    await publishMyCamIfNeeded();
+
     const members = roomData.members || {};
-    for (const memberId in members) {
-      if (memberId === kt.getUserId()) continue;
-      ensureVideoBox(memberId);
-    }
-
-    await nextTick();
-
-    await autoPublishIfNeeded();
+    for (const memberId in members) ensureUser(memberId);
   } finally {
     joining.value = false;
   }
 };
 
-const publish = async () => {
-  publishing.value = true;
+const startScreenShare = async () => {
   try {
-    await autoPublishIfNeeded();
-  } finally {
-    publishing.value = false;
+    sharing.value = true;
+
+    await kt.shareStop().catch(() => {});
+
+    if (localScreenStream) {
+      localScreenStream.getTracks().forEach((t) => t.stop());
+      localScreenStream = null;
+    }
+
+    localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+
+    const [track] = localScreenStream.getVideoTracks();
+    if (track) track.onended = () => stopScreenShare();
+
+    const me = kt.getUserId();
+    await setScreenStream(me, localScreenStream);
+
+    const canvas = getMyCanvas();
+    const res = await kt.screenStart(localScreenStream, undefined, canvas);
+
+    if (res?.code !== "200") {
+      sharing.value = false;
+      alert("screenStart failed!");
+    }
+  } catch (e) {
+    console.error(e);
+    sharing.value = false;
+    alert(String(e?.message || e));
+  }
+};
+
+const stopScreenShare = async () => {
+  sharing.value = false;
+
+  await kt.shareStop().catch(() => {});
+
+  if (localScreenStream) {
+    localScreenStream.getTracks().forEach((t) => t.stop());
+    localScreenStream = null;
+  }
+
+  const me = kt?.getUserId?.();
+  if (me) {
+    subscribed.delete(`screen:${me}`);
+    await clearScreenVideo(me);
   }
 };
 </script>
@@ -235,17 +358,56 @@ const publish = async () => {
   border-radius: 10px;
 }
 
-#videoBox {
-  display: inline-grid;
-  grid-template-columns: repeat(auto-fill, minmax(100%, auto));
-}
-#videoBox video {
-  width: 100%;
-}
-
 #roomButton {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+#videoBox {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.multiVideo {
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.userLabel {
+  margin: 0 0 8px;
+  font-weight: 700;
+}
+
+.videoRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.videoCol {
+  position: relative;
+}
+
+.subLabel {
+  margin: 0 0 6px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+#videoBox video {
+  width: 100%;
+  background: #000;
+}
+
+.screenCanvas {
+  position: absolute;
+  left: 0;
+  top: 22px; 
+  width: 100%;
+  height: calc(100% - 22px);
+  pointer-events: none;
 }
 </style>

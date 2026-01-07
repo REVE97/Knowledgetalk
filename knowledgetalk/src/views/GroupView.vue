@@ -8,9 +8,17 @@
         placeholder="room id"
       />
 
-      <button :disabled="!ready || creating" @click="createVideoRoom">CreateVideoRoom</button>
-      <button :disabled="!ready || joining || joined" @click="joinRoom">JoinRoom</button>
-      <button :disabled="!ready || !joined || publishing" @click="publish">Publish</button>
+      <button :disabled="!ready || creating || joined" @click="createVideoRoom">
+        CreateVideoRoom
+      </button>
+      <button :disabled="!ready || joining || joined" @click="joinRoom">
+        JoinRoom
+      </button>
+
+      <!-- 테스트용 수동 Group 연결 버튼 -->
+      <button :disabled="!ready || !joined || publishing" @click="publish">
+        Publish(수동)
+      </button>
     </div>
 
     <div id="videoBox">
@@ -31,10 +39,7 @@ import { onBeforeUnmount, onMounted, ref, nextTick } from "vue";
 
 function createKT() {
   const Con = new Knowledgetalk();
-
-  if (!Con) {
-    throw new Error("Knowledgetalk SDK 로딩 안됨");
-  }
+  if (!Con) throw new Error("Knowledgetalk SDK 로딩 안됨");
   return Con;
 }
 
@@ -54,6 +59,10 @@ const logs = ref([]);
 
 let kt = null;
 let presenceHandler = null;
+
+let localStream = null;
+
+let publishedOnce = false;
 
 const log = (type, obj) => {
   const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
@@ -78,6 +87,32 @@ const setVideoStream = async (userId, stream) => {
   el.srcObject = stream;
 };
 
+const startLocalCameraIfNeeded = async () => {
+  if (localStream) return localStream;
+
+  localStream = await navigator.mediaDevices.getUserMedia({
+    video: { width: 640, height: 380 },
+    audio: false
+  });
+
+  const me = kt.getUserId();
+  await setVideoStream(me, localStream); // ✅ 내 카메라 즉시 표시
+  return localStream;
+};
+
+const autoPublishIfNeeded = async () => {
+  if (!joined.value) return;
+  if (publishedOnce) return;
+
+  await startLocalCameraIfNeeded();
+  const ok = await kt.publishVideo("cam", localStream);
+  if (!ok) {
+    alert("publish video failed!");
+    return;
+  }
+  publishedOnce = true;
+};
+
 onMounted(async () => {
   try {
     kt = createKT();
@@ -95,7 +130,7 @@ onMounted(async () => {
 
       switch (msg.type) {
         case "join": {
-          const joinedUserId = msg?.user?.id || msg?.user?.userId;
+          const joinedUserId = msg?.user?.id || msg?.user?.userId || msg?.user;
           ensureVideoBox(joinedUserId);
           break;
         }
@@ -131,6 +166,13 @@ onBeforeUnmount(() => {
   try {
     if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
   } catch (_) {}
+
+  try {
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+      localStream = null;
+    }
+  } catch (_) {}
 });
 
 const createVideoRoom = async () => {
@@ -139,6 +181,8 @@ const createVideoRoom = async () => {
     const roomData = await kt.createVideoRoom();
     if (roomData.code !== "200") return alert("createVideoRoom failed!");
     roomId.value = roomData.roomId;
+
+    await joinRoom();
   } finally {
     creating.value = false;
   }
@@ -165,6 +209,8 @@ const joinRoom = async () => {
     }
 
     await nextTick();
+
+    await autoPublishIfNeeded();
   } finally {
     joining.value = false;
   }
@@ -173,16 +219,7 @@ const joinRoom = async () => {
 const publish = async () => {
   publishing.value = true;
   try {
-    const localStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 380 },
-      audio: false
-    });
-
-    const me = kt.getUserId();
-    await setVideoStream(me, localStream);
-
-    const ok = await kt.publishVideo("cam", localStream);
-    if (!ok) alert("publish video failed!");
+    await autoPublishIfNeeded();
   } finally {
     publishing.value = false;
   }

@@ -8,9 +8,17 @@
         placeholder="room id"
       />
 
-      <button :disabled="!ready || creating" @click="createRoom">CreateRoom</button>
-      <button :disabled="!ready || joining || joined" @click="joinRoom">JoinRoom</button>
-      <button :disabled="!ready || !joined" @click="startP2P">p2p</button>
+      <button :disabled="!ready || creating || joined" @click="createRoom">
+        CreateRoom
+      </button>
+      <button :disabled="!ready || joining || joined" @click="joinRoom()">
+        JoinRoom
+      </button>
+
+      <!-- 테스트용 수동 P2P 연결 버튼 -->
+      <button :disabled="!ready || !joined" @click="manualP2P">
+        p2p(수동)
+      </button>
     </div>
 
     <div id="videoBox">
@@ -31,10 +39,7 @@ import { onBeforeUnmount, onMounted, ref, nextTick } from "vue";
 
 function createKT() {
   const Con = new Knowledgetalk();
-
-  if (!Con) {
-    throw new Error("Knowledgetalk SDK 로딩 안됨");
-  }
+  if (!Con) throw new Error("Knowledgetalk SDK 로딩 안됨");
   return Con;
 }
 
@@ -53,6 +58,12 @@ const logs = ref([]);
 
 let kt = null;
 let presenceHandler = null;
+
+// 내 로컬 스트림은 1번만 켜서 유지
+let localStream = null;
+
+// 이미 publish 한 대상 중복 방지
+const publishedTargets = new Set();
 
 const log = (type, obj) => {
   const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
@@ -77,6 +88,44 @@ const setVideoStream = async (userId, stream) => {
   el.srcObject = stream;
 };
 
+const startLocalCameraIfNeeded = async () => {
+  if (localStream) return localStream;
+
+  localStream = await navigator.mediaDevices.getUserMedia({
+    video: true,
+    audio: false
+  });
+
+  const me = kt.getUserId();
+  await setVideoStream(me, localStream); // 내 화면 즉시 표시
+  return localStream;
+};
+
+const publishTo = async (targetId) => {
+  if (!targetId) return;
+  const me = kt.getUserId();
+  if (!joined.value) return;
+  if (targetId === me) return;
+
+  // 중복 publish 방지
+  if (publishedTargets.has(targetId)) return;
+
+  await startLocalCameraIfNeeded();
+  await kt.publishP2P(targetId, "cam", localStream);
+  publishedTargets.add(targetId);
+};
+
+const publishToAllInRoom = async (roomData) => {
+  const me = kt.getUserId();
+  const members = roomData?.members || {};
+
+  // members가 객체 형태라고 가정하고 기존 코드와 동일하게 순회
+  for (const memberId in members) {
+    if (memberId === me) continue;
+    await publishTo(memberId);
+  }
+};
+
 onMounted(async () => {
   try {
     kt = createKT();
@@ -93,9 +142,13 @@ onMounted(async () => {
       log("receive", msg);
 
       switch (msg.type) {
+        // 누군가 Join하면, 버튼 누를 필요 없이 즉시 상대에게 publish
         case "join": {
-          const joinedUserId = msg?.user?.id || msg?.user?.userId;
-          ensureVideoBox(joinedUserId);
+          const joinedUserId = msg?.user?.id || msg?.user?.userId || msg?.user;
+          if (joinedUserId) {
+            ensureVideoBox(joinedUserId);     // 상대 박스 생성(아이디 표시)
+            await publishTo(joinedUserId);    
+          }
           break;
         }
 
@@ -106,9 +159,11 @@ onMounted(async () => {
               : msg?.user?.id || msg?.user?.userId;
 
           removeVideoBox(leftUserId);
+          publishedTargets.delete(leftUserId);
           break;
         }
 
+        // 상대 스트림이 구독(수신)되면 화면에 붙임
         case "subscribed": {
           const userId = msg.user;
           const stream = kt.getStream(userId);
@@ -129,6 +184,14 @@ onBeforeUnmount(() => {
   try {
     if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
   } catch (_) {}
+
+  // 카메라 자원 정리
+  try {
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+      localStream = null;
+    }
+  } catch (_) {}
 });
 
 const createRoom = async () => {
@@ -137,49 +200,48 @@ const createRoom = async () => {
     const roomData = await kt.createRoom();
     if (roomData.code !== "200") return alert("createRoom failed!");
     roomId.value = roomData.roomId;
+
+    // 방 생성 후 자동으로 Join까지 처리(요구사항: CreateRoom만 눌러도 내 카메라/ID 나오게)
+    await joinRoom(roomId.value.trim());
   } finally {
     creating.value = false;
   }
 };
 
-const joinRoom = async () => {
-  if (!roomId.value.trim()) {
+const joinRoom = async (overrideRoomId) => {
+  if (!overrideRoomId && !roomId.value.trim()) {
     const input = prompt("입장할 roomId를 입력하세요.");
     if (!input) return;
     roomId.value = input.trim();
   }
 
+  const rid = (overrideRoomId || roomId.value).trim();
+  if (!rid) return;
+
   joining.value = true;
   try {
-    const roomData = await kt.joinRoom(roomId.value.trim());
+    const roomData = await kt.joinRoom(rid);
     if (roomData.code !== "200") return alert("joinRoom failed!");
 
     joined.value = true;
 
-    const members = roomData.members || {};
-    for (const memberId in members) {
-      if (memberId === kt.getUserId()) continue;
-      ensureVideoBox(memberId);
-    }
+    // Join 성공 즉시 내 카메라/ID 표시
+    await startLocalCameraIfNeeded();
+
+    // 이미 방에 있는 사람들에게 자동 publish
+    await publishToAllInRoom(roomData);
+
     await nextTick();
   } finally {
     joining.value = false;
   }
 };
 
-const startP2P = async () => {
+// 필요하면 수동으로 특정 대상에게 publish 가능
+const manualP2P = async () => {
   const targetId = (prompt("상대방 id 입력") || "").trim();
   if (!targetId) return;
-
-  const localStream = await navigator.mediaDevices.getUserMedia({
-    video: true,
-    audio: false
-  });
-
-  const me = kt.getUserId();
-  await setVideoStream(me, localStream);
-
-  await kt.publishP2P(targetId, "cam", localStream);
+  await publishTo(targetId);
 };
 </script>
 

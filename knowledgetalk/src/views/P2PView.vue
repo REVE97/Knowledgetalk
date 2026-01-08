@@ -1,38 +1,25 @@
 <template>
   <section>
+    <!-- 방 생성, 방 입장 / 화면 공유, 종료 버튼 -->
     <div id="roomButton">
-      <input
-        id="roomIdInput"
-        v-model="roomId"
-        type="text"
-        placeholder="room id"
-      />
+      <input id="roomIdInput" v-model="roomId" type="text" placeholder="room id" />
 
-      <button :disabled="!ready || creating || joined" @click="createRoom">
-        CreateRoom
-      </button>
+      <button :disabled="!ready || creating || joined" @click="createRoom">CreateRoom</button>
+      <button :disabled="!ready || joining || joined" @click="joinRoom()">JoinRoom</button>
 
-      <button :disabled="!ready || joining || joined" @click="joinRoom()">
-        JoinRoom
-      </button>
-
-      <button :disabled="!ready || !joined || sharing" @click="startScreenShare">
-        화면 공유
-      </button>
-
-      <button :disabled="!ready || !joined || !sharing" @click="stopScreenShare">
-        공유 종료
-      </button>
+      <button :disabled="!ready || !joined || sharing" @click="startScreenShare">화면 공유</button>
+      <button :disabled="!ready || !joined || !sharing" @click="stopScreenShare">공유 종료</button>
     </div>
 
+    <!-- 웹캠 화면 , 화면 공유 화면 -->
     <div id="videoBox">
-      <div v-for="id in videoIds" :key="id" class="multiVideo">
+      <div v-for="id in peerIds" :key="id" class="multiVideo">
         <p class="userLabel">{{ id }}</p>
 
         <div class="videoRow">
           <div class="videoCol">
             <p class="subLabel">CAM</p>
-            <video :id="`multiVideo-${id}`" autoplay playsinline></video>
+            <video :id="`camVideo-${id}`" autoplay playsinline></video>
           </div>
 
           <div class="videoCol">
@@ -44,10 +31,11 @@
       </div>
     </div>
 
-    <!-- ✅ 채팅창: Join/Create 이후에만 표시 (roomId 출력 안 함) -->
+    <!-- 채팅창 화면 -->
     <div v-if="joined" id="chatBox">
       <div class="chatList" ref="chatListEl">
         <div style="font-family: Arial, Helvetica, sans-serif;">CHATBOX</div>
+
         <div
           v-for="(m, i) in chatMessages"
           :key="i"
@@ -72,6 +60,7 @@
       </div>
     </div>
 
+    <!-- 주요 시스템 로그 출력 -->
     <div id="printBox">
       <p v-for="(l, i) in logs" :key="i">[{{ l.type }}] {{ l.text }}</p>
     </div>
@@ -81,16 +70,20 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, nextTick } from "vue";
 
+// KnowledgeTalk SDK 로드 객체 생성
 function createKT() {
   const Con = new Knowledgetalk();
   if (!Con) throw new Error("Knowledgetalk SDK 로딩 안됨");
   return Con;
 }
 
+// KnowledgeTalk SDK 코드, 키값
 const cpCode = "KP-20200101-01";
 const authKey =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoi64Kg66as7KeA7Y-s7J247Yq4IiwibWF4VXNlciI6IjUwMDAwMDAwIiwic3RhcnREYXRlIjoiMjAyMC0wMS0wMVQwNjo0NzowMC4wMDBaIiwiZW5kRGF0ZSI6IjIwMzAtMTItMzFUMDY6NDc6MDAuMDAwWiIsImF1dGhDb2RlIjoiS1AtMjAyMDAxMDEtMDEiLCJjb21wYW55Q29kZSI6IkxJQy0wMSIsImlhdCI6MTU4NzUzODExNH0.73A0UiiMHJeIS8pIgoN4DfEWT4QCsMnXkO4uUdnfbYI";
 
+
+// 변수 상태관리
 const roomId = ref("");
 const ready = ref(false);
 const joined = ref(false);
@@ -98,23 +91,62 @@ const creating = ref(false);
 const joining = ref(false);
 const sharing = ref(false);
 
-const videoIds = ref([]);
+const peerIds = ref([]); 
 const logs = ref([]);
 
 let kt = null;
 let presenceHandler = null;
 
 let localCamStream = null;
-let screenStream = null;
+let localScreenStream = null;
 
-const publishedTargets = new Set();
-const screenTargets = new Set();
+// 중복 방지 상수
+const publishedCamTargets = new Set(); 
+const screenTargets = new Set();       
 
-/** ✅ Chat */
+// 채팅 관련 상수
 const chatMessage = ref("");
-const chatMessages = ref([]); // { user, message, mine }
+const chatMessages = ref([]); 
 const chatListEl = ref(null);
 const isComposing = ref(false);
+
+const pushLog = (type, obj) => {
+  const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
+  logs.value.push({ type, text });
+};
+
+const ensurePeer = (id) => {
+  if (!id) return;
+  if (!peerIds.value.includes(id)) peerIds.value.push(id);
+};
+
+const removePeer = (id) => {
+  peerIds.value = peerIds.value.filter((x) => x !== id);
+  publishedCamTargets.delete(id);
+  screenTargets.delete(id);
+};
+
+const getVideoEl = (kind, id) =>
+  document.getElementById(`${kind === "cam" ? "camVideo" : "screenVideo"}-${id}`);
+
+const getCanvasEl = (id) => document.getElementById(`screenCanvas-${id}`) || undefined;
+
+const setStream = async (kind, id, stream) => {
+  ensurePeer(id);
+  await nextTick();
+  const el = getVideoEl(kind, id);
+  if (!el) return;
+
+  el.srcObject = null;
+  await nextTick();
+  el.srcObject = stream;
+};
+
+const clearStream = async (kind, id) => {
+  await nextTick();
+  const el = getVideoEl(kind, id);
+  if (el) el.srcObject = null;
+};
 
 const scrollChatToBottom = async () => {
   await nextTick();
@@ -123,74 +155,36 @@ const scrollChatToBottom = async () => {
 };
 
 const onEnterSend = () => {
-  // ✅ 한글 조합 중 Enter는 전송 금지 (조합 확정 Enter와 충돌 방지)
-  if (isComposing.value) return;
+  if (isComposing.value) return; 
   sendChat();
 };
 
 const sendChat = async () => {
-  const msg = (chatMessage.value || "").trim(); // ✅ 전송 시에만 trim
-  if (!msg) return;
-  if (!joined.value) return;
+  const msg = (chatMessage.value || "").trim(); 
+  if (!msg || !joined.value) return;
 
-  // roomId/target 중 하나는 필수 → 방 전체로 전송
   const rid = kt?.getRoomId?.() || roomId.value.trim();
   if (!rid) return;
 
   const res = await kt.chat(msg, rid);
-  if (res?.code !== "200") {
-    alert("chat failed!");
-    return;
-  }
+  if (res?.code !== "200") return alert("chat failed!");
 
-  // 내 메시지도 즉시 반영 (UX)
   const me = kt.getUserId();
   chatMessages.value.push({ user: me, message: msg, mine: true });
   chatMessage.value = "";
   await scrollChatToBottom();
 };
 
-const log = (type, obj) => {
-  const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
-  logs.value.push({ type, text });
+const handleChatEvent = async (msg) => {
+  const sender = msg.user;
+  const text = msg.message;
+  const me = kt?.getUserId?.();
+
+  if (sender === me) return;
+
+  chatMessages.value.push({ user: sender, message: text, mine: false });
+  await scrollChatToBottom();
 };
-
-const ensureVideoBox = (id) => {
-  if (!id) return;
-  if (!videoIds.value.includes(id)) videoIds.value.push(id);
-};
-
-const removeVideoBox = (id) => {
-  videoIds.value = videoIds.value.filter((x) => x !== id);
-};
-
-const setCamStream = async (userId, stream) => {
-  ensureVideoBox(userId);
-  await nextTick();
-  const el = document.getElementById(`multiVideo-${userId}`);
-  if (el) el.srcObject = stream;
-};
-
-const setScreenStream = async (userId, stream) => {
-  ensureVideoBox(userId);
-  await nextTick();
-  const el = document.getElementById(`screenVideo-${userId}`);
-  if (!el) return;
-
-  // 일부 브라우저에서 재할당이 안 먹는 경우가 있어 null → 재할당
-  el.srcObject = null;
-  await nextTick();
-  el.srcObject = stream;
-};
-
-const clearScreenVideo = async (userId) => {
-  await nextTick();
-  const el = document.getElementById(`screenVideo-${userId}`);
-  if (el) el.srcObject = null;
-};
-
-const getScreenCanvas = (userId) =>
-  document.getElementById(`screenCanvas-${userId}`) || undefined;
 
 const startLocalCamIfNeeded = async () => {
   if (localCamStream) return localCamStream;
@@ -201,18 +195,18 @@ const startLocalCamIfNeeded = async () => {
   });
 
   const me = kt.getUserId();
-  await setCamStream(me, localCamStream);
+  await setStream("cam", me, localCamStream);
   return localCamStream;
 };
 
 const publishCamTo = async (targetId) => {
   const me = kt.getUserId();
   if (!joined.value || !targetId || targetId === me) return;
-  if (publishedTargets.has(targetId)) return;
+  if (publishedCamTargets.has(targetId)) return;
 
   await startLocalCamIfNeeded();
   await kt.publishP2P(targetId, "cam", localCamStream);
-  publishedTargets.add(targetId);
+  publishedCamTargets.add(targetId);
 };
 
 const publishCamToAllInRoom = async (roomData) => {
@@ -224,16 +218,15 @@ const publishCamToAllInRoom = async (roomData) => {
 };
 
 const startScreenStreamIfNeeded = async () => {
-  if (screenStream) return screenStream;
+  if (localScreenStream) return localScreenStream;
 
-  screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-  const [track] = screenStream.getVideoTracks();
+  localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+  const [track] = localScreenStream.getVideoTracks();
   if (track) track.onended = () => stopScreenShare();
 
   const me = kt.getUserId();
-  await setScreenStream(me, screenStream);
-
-  return screenStream;
+  await setStream("screen", me, localScreenStream);
+  return localScreenStream;
 };
 
 const screenStartTo = async (targetId) => {
@@ -242,40 +235,40 @@ const screenStartTo = async (targetId) => {
   if (screenTargets.has(targetId)) return;
 
   const stream = await startScreenStreamIfNeeded();
-  const canvas = getScreenCanvas(me);
+  const canvas = getCanvasEl(me);
 
   const res = await kt.screenStart(stream, targetId, canvas);
-  if (res?.code === "200") {
-    screenTargets.add(targetId);
-  } else {
-    alert("screenStart failed!");
-  }
+  if (res?.code !== "200") return alert("screenStart failed!");
+
+  screenTargets.add(targetId);
 };
 
-const screenStartToAllInRoom = async () => {
+const screenStartToAll = async () => {
   const me = kt.getUserId();
-  for (const id of videoIds.value) {
+  for (const id of peerIds.value) {
     if (id !== me) await screenStartTo(id);
   }
 };
 
+// Mount 시에 실행되는 함수
 onMounted(async () => {
   try {
     kt = createKT();
-    const result = await kt.init(cpCode, authKey);
-    if (result.code !== "200") return alert("init failed!");
+
+    const initRes = await kt.init(cpCode, authKey);
+    if (initRes.code !== "200") return alert("init failed!");
     ready.value = true;
 
     presenceHandler = async (e) => {
       const msg = e.detail;
-      log("receive", msg);
+      pushLog("receive", msg);
 
       switch (msg.type) {
         case "join": {
           const uid = msg?.user?.id || msg?.user?.userId || msg?.user;
           if (!uid) break;
 
-          ensureVideoBox(uid);
+          ensurePeer(uid);
           await publishCamTo(uid);
 
           if (sharing.value) await screenStartTo(uid);
@@ -290,41 +283,32 @@ onMounted(async () => {
 
           if (!uid) break;
 
-          removeVideoBox(uid);
-          publishedTargets.delete(uid);
-          screenTargets.delete(uid);
-          await clearScreenVideo(uid);
+          removePeer(uid);
+          await clearStream("screen", uid);
           break;
         }
 
         case "subscribed": {
+          // cam:true => 상대 cam, cam:false => 상대 screen
           if (msg.cam) {
             const stream = kt.getStream(msg.user);
-            if (stream) await setCamStream(msg.user, stream);
+            if (stream) await setStream("cam", msg.user, stream);
           } else {
             const stream = kt.getStream("screen");
-            if (stream) await setScreenStream(msg.user, stream);
-            else await clearScreenVideo(msg.user);
+            if (stream) await setStream("screen", msg.user, stream);
+            else await clearStream("screen", msg.user);
           }
           break;
         }
 
         case "shareStop": {
           const sender = msg.sender || msg.user;
-          if (sender) await clearScreenVideo(sender);
+          if (sender) await clearStream("screen", sender);
           break;
         }
 
         case "chat": {
-          const sender = msg.user;
-          const text = msg.message;
-
-          // 내 메시지는 sendChat에서 이미 추가하므로 중복 방지(상황에 따라 서버가 에코 보내면 필요)
-          const me = kt?.getUserId?.();
-          if (sender === me) break;
-
-          chatMessages.value.push({ user: sender, message: text, mine: false });
-          await scrollChatToBottom();
+          await handleChatEvent(msg);
           break;
         }
 
@@ -340,6 +324,7 @@ onMounted(async () => {
   }
 });
 
+// Mount 전에 실행되는 함수
 onBeforeUnmount(() => {
   try {
     if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
@@ -353,20 +338,20 @@ onBeforeUnmount(() => {
   } catch (_) {}
 
   try {
-    if (screenStream) {
-      screenStream.getTracks().forEach((t) => t.stop());
-      screenStream = null;
+    if (localScreenStream) {
+      localScreenStream.getTracks().forEach((t) => t.stop());
+      localScreenStream = null;
     }
   } catch (_) {}
 });
 
+// 방 생성, 방 입장 SDK 객체
 const createRoom = async () => {
   creating.value = true;
   try {
     const res = await kt.createRoom();
     if (res.code !== "200") return alert("createRoom failed!");
     roomId.value = res.roomId;
-
     await joinRoom(res.roomId);
   } finally {
     creating.value = false;
@@ -374,10 +359,8 @@ const createRoom = async () => {
 };
 
 const joinRoom = async (overrideRoomId) => {
-  const ridFromArg =
-    typeof overrideRoomId === "string" ? overrideRoomId.trim() : "";
-
-  let rid = ridFromArg || roomId.value.trim();
+  let rid =
+    typeof overrideRoomId === "string" ? overrideRoomId.trim() : roomId.value.trim();
 
   if (!rid) {
     const input = prompt("입장할 roomId를 입력하세요.");
@@ -393,34 +376,30 @@ const joinRoom = async (overrideRoomId) => {
 
     joined.value = true;
 
-    // Join 직후 내 아이디 박스 보이게
-    ensureVideoBox(kt.getUserId());
+    ensurePeer(kt.getUserId());
 
     await startLocalCamIfNeeded();
     await publishCamToAllInRoom(res);
-
-    await nextTick();
   } finally {
     joining.value = false;
   }
 };
 
+// 화면 공유 SDK 객체
 const startScreenShare = async () => {
   try {
     sharing.value = true;
 
-    // SDK 상태 꼬임 방지: 이전 공유 정리
     await kt.shareStop().catch(() => {});
     screenTargets.clear();
 
-    // 로컬 스트림도 재시작하도록 정리(재공유 문제 예방)
-    if (screenStream) {
-      screenStream.getTracks().forEach((t) => t.stop());
-      screenStream = null;
+    if (localScreenStream) {
+      localScreenStream.getTracks().forEach((t) => t.stop());
+      localScreenStream = null;
     }
 
     await startScreenStreamIfNeeded();
-    await screenStartToAllInRoom();
+    await screenStartToAll();
   } catch (e) {
     console.error(e);
     sharing.value = false;
@@ -434,20 +413,18 @@ const stopScreenShare = async () => {
 
   await kt.shareStop().catch(() => {});
 
-  if (screenStream) {
-    screenStream.getTracks().forEach((t) => t.stop());
-    screenStream = null;
+  if (localScreenStream) {
+    localScreenStream.getTracks().forEach((t) => t.stop());
+    localScreenStream = null;
   }
 
   const me = kt?.getUserId?.();
-  if (me) await clearScreenVideo(me);
+  if (me) await clearStream("screen", me);
 };
 </script>
 
 <style>
-/* =========================
-   공통 입력 / 버튼 영역
-========================= */
+/* 방 생성, 방 입장 CSS */
 #roomIdInput {
   padding: 10px;
   width: 220px;
@@ -455,90 +432,62 @@ const stopScreenShare = async () => {
   border: 2px darkslategray solid;
   border-radius: 10px;
 }
-
 #roomButton {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-/* =========================
-   비디오 카드 레이아웃
-========================= */
+/* 카메라, 화면 공유 CSS */
 #videoBox {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-
-/* 사용자 카드 */
 .multiVideo {
   border: 1px solid #ddd;
   border-radius: 12px;
   padding: 10px;
 }
-
-/* 사용자 ID */
 .userLabel {
   margin: 0 0 8px;
   font-weight: 700;
 }
-
-/* CAM / SCREEN 2열 배치 */
 .videoRow {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-
-/* =========================
-   핵심: SCREEN 영역 레이아웃 고정
-========================= */
 .videoCol {
   position: relative;
-  overflow: hidden;            /* ✅ SDK가 canvas 여러 개 붙여도 높이 증가 차단 */
+  overflow: hidden;
 }
-
-/* 섹션 라벨 */
 .subLabel {
   margin: 0 0 6px;
   font-size: 12px;
   opacity: 0.8;
 }
-
-/* 모든 video 기본 설정 */
 #videoBox video {
-  display: block;              /* ✅ inline baseline 여백 제거 */
+  display: block;
   width: 100%;
   border-radius: 10px;
   background: #000;
 }
-
-/* =========================
-   SCREEN video 높이 고정 (세로 확장 방지)
-========================= */
 video[id^="screenVideo-"] {
-  height: 320px;               /* ✅ 화면 공유 최대 출력 높이 */
+  height: 320px;
   max-height: 320px;
-  object-fit: contain;         /* 전체 화면 유지 (cover로 바꾸면 꽉 참) */
+  object-fit: contain;
 }
-
-/* =========================
-   SCREEN 오버레이 캔버스
-   (SDK가 추가하는 canvas들도 전부 흡수)
-========================= */
 .videoCol canvas {
   position: absolute;
   left: 0;
-  top: 22px;                   /* subLabel 높이 */
+  top: 22px;
   width: 100%;
   height: calc(100% - 22px);
   pointer-events: none;
 }
 
-/* =========================
-   채팅 UI
-========================= */
+/* 채팅방 CSS */
 #chatBox {
   margin-top: 14px;
   border: 1px solid #ddd;
@@ -546,7 +495,6 @@ video[id^="screenVideo-"] {
   padding: 10px;
   width: 500px;
 }
-
 .chatList {
   max-height: 220px;
   overflow-y: auto;
@@ -555,23 +503,19 @@ video[id^="screenVideo-"] {
   gap: 8px;
   padding: 4px;
 }
-
 .chatItem {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
 }
-
 .chatItem.mine {
   align-items: flex-end;
 }
-
 .chatMeta {
   font-size: 12px;
   opacity: 0.7;
   margin-bottom: 2px;
 }
-
 .chatBubble {
   background: #f3f3f3;
   border-radius: 10px;
@@ -580,16 +524,13 @@ video[id^="screenVideo-"] {
   white-space: pre-wrap;
   word-break: break-word;
 }
-
 .chatItem.mine .chatBubble {
   background: #e9f3ff;
 }
-
 .chatInputRow {
   margin-top: 10px;
   display: flex;
 }
-
 .chatInput {
   width: min(900px, 100%);
   flex: 1;
@@ -597,5 +538,4 @@ video[id^="screenVideo-"] {
   border: 1px solid #ddd;
   border-radius: 10px;
 }
-
 </style>

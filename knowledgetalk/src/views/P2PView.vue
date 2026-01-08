@@ -82,7 +82,6 @@ const cpCode = "KP-20200101-01";
 const authKey =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoi64Kg66as7KeA7Y-s7J247Yq4IiwibWF4VXNlciI6IjUwMDAwMDAwIiwic3RhcnREYXRlIjoiMjAyMC0wMS0wMVQwNjo0NzowMC4wMDBaIiwiZW5kRGF0ZSI6IjIwMzAtMTItMzFUMDY6NDc6MDAuMDAwWiIsImF1dGhDb2RlIjoiS1AtMjAyMDAxMDEtMDEiLCJjb21wYW55Q29kZSI6IkxJQy0wMSIsImlhdCI6MTU4NzUzODExNH0.73A0UiiMHJeIS8pIgoN4DfEWT4QCsMnXkO4uUdnfbYI";
 
-
 // 변수 상태관리
 const roomId = ref("");
 const ready = ref(false);
@@ -91,46 +90,51 @@ const creating = ref(false);
 const joining = ref(false);
 const sharing = ref(false);
 
-const peerIds = ref([]); 
-const logs = ref([]);
+const peerIds = ref([]); // 화면에 카드를 만들기 위한 ID 리스트
+const logs = ref([]); // 로그
 
-let kt = null;
-let presenceHandler = null;
+let kt = null; // Knowledgetalk SDK 객체를 담을 변수
+let presenceHandler = null; // 이벤트 발생 함수를 담을 변수
 
-let localCamStream = null;
-let localScreenStream = null;
+let localCamStream = null; // 카메라 웹캠 스트림 변수
+let localScreenStream = null; // 화면 공유 스트림 변수
 
 // 중복 방지 상수
-const publishedCamTargets = new Set(); 
-const screenTargets = new Set();       
+const publishedCamTargets = new Set(); // 이미 카메라 publish 된 사용자 중복 방지
+const screenTargets = new Set(); // 이미 화면 공유된 사용자 중복 방지
 
 // 채팅 관련 상수
 const chatMessage = ref("");
 const chatMessages = ref([]); 
 const chatListEl = ref(null);
-const isComposing = ref(false);
+const isComposing = ref(false); // IME 조합 체크
 
+// log 에 기록
 const pushLog = (type, obj) => {
   const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
   logs.value.push({ type, text });
 };
 
+// peerid 에 없으면 추가
 const ensurePeer = (id) => {
   if (!id) return;
   if (!peerIds.value.includes(id)) peerIds.value.push(id);
 };
 
+// peerid 에서 제거
 const removePeer = (id) => {
   peerIds.value = peerIds.value.filter((x) => x !== id);
   publishedCamTargets.delete(id);
   screenTargets.delete(id);
 };
 
+// CAM/SCREEN video DOM 찾기
 const getVideoEl = (kind, id) =>
   document.getElementById(`${kind === "cam" ? "camVideo" : "screenVideo"}-${id}`);
 
 const getCanvasEl = (id) => document.getElementById(`screenCanvas-${id}`) || undefined;
 
+// 스트림 설정
 const setStream = async (kind, id, stream) => {
   ensurePeer(id);
   await nextTick();
@@ -142,23 +146,27 @@ const setStream = async (kind, id, stream) => {
   el.srcObject = stream;
 };
 
+// 스트림 제거
 const clearStream = async (kind, id) => {
   await nextTick();
   const el = getVideoEl(kind, id);
   if (el) el.srcObject = null;
 };
 
+// 채팅창이 항상 아래로 배치되게 
 const scrollChatToBottom = async () => {
   await nextTick();
   const el = chatListEl.value;
   if (el) el.scrollTop = el.scrollHeight;
 };
 
+// 엔터키로 채팅 내용 전송
 const onEnterSend = () => {
   if (isComposing.value) return; 
   sendChat();
 };
 
+// 채팅창에 채팅 내용 전송
 const sendChat = async () => {
   const msg = (chatMessage.value || "").trim(); 
   if (!msg || !joined.value) return;
@@ -175,6 +183,7 @@ const sendChat = async () => {
   await scrollChatToBottom();
 };
 
+// 내 화면에도 채팅 내용 추가
 const handleChatEvent = async (msg) => {
   const sender = msg.user;
   const text = msg.message;
@@ -186,6 +195,7 @@ const handleChatEvent = async (msg) => {
   await scrollChatToBottom();
 };
 
+// 로컬 카메라 스트림 확보
 const startLocalCamIfNeeded = async () => {
   if (localCamStream) return localCamStream;
 
@@ -199,16 +209,18 @@ const startLocalCamIfNeeded = async () => {
   return localCamStream;
 };
 
+// publishP2P -> 캠 송출 / 수신 
 const publishCamTo = async (targetId) => {
   const me = kt.getUserId();
   if (!joined.value || !targetId || targetId === me) return;
   if (publishedCamTargets.has(targetId)) return;
 
-  await startLocalCamIfNeeded();
+  await startLocalCamIfNeeded(); 
   await kt.publishP2P(targetId, "cam", localCamStream);
   publishedCamTargets.add(targetId);
 };
 
+// 캠 송출 반복
 const publishCamToAllInRoom = async (roomData) => {
   const me = kt.getUserId();
   const members = roomData?.members || {};
@@ -217,6 +229,7 @@ const publishCamToAllInRoom = async (roomData) => {
   }
 };
 
+// getDisplayMedia -> 로컬 화면 스트림 확보
 const startScreenStreamIfNeeded = async () => {
   if (localScreenStream) return localScreenStream;
 
@@ -229,6 +242,7 @@ const startScreenStreamIfNeeded = async () => {
   return localScreenStream;
 };
 
+// 공유 화면 송출 시작
 const screenStartTo = async (targetId) => {
   const me = kt.getUserId();
   if (!joined.value || !targetId || targetId === me) return;
@@ -250,21 +264,23 @@ const screenStartToAll = async () => {
   }
 };
 
-// Mount 시에 실행되는 함수
+// Mount 시에 실행되는 함수 
 onMounted(async () => {
   try {
     kt = createKT();
 
+    // SDK의 Code 와 인증 키 값을 받아 초기화 -> 성공 : true , 실패 false 반환
     const initRes = await kt.init(cpCode, authKey);
     if (initRes.code !== "200") return alert("init failed!");
     ready.value = true;
 
+    // 각 이벤트 발생 처리 함수
     presenceHandler = async (e) => {
       const msg = e.detail;
       pushLog("receive", msg);
 
       switch (msg.type) {
-        case "join": {
+        case "join": { // 방 입장
           const uid = msg?.user?.id || msg?.user?.userId || msg?.user;
           if (!uid) break;
 
@@ -275,7 +291,7 @@ onMounted(async () => {
           break;
         }
 
-        case "leave": {
+        case "leave": { // 방 나감
           const uid =
             typeof msg.user === "string"
               ? msg.user
@@ -288,8 +304,8 @@ onMounted(async () => {
           break;
         }
 
+        // cam 값 true/false 로 카메라 구분
         case "subscribed": {
-          // cam:true => 상대 cam, cam:false => 상대 screen
           if (msg.cam) {
             const stream = kt.getStream(msg.user);
             if (stream) await setStream("cam", msg.user, stream);
@@ -301,12 +317,14 @@ onMounted(async () => {
           break;
         }
 
+        // 공유 종료 이벤트
         case "shareStop": {
           const sender = msg.sender || msg.user;
           if (sender) await clearStream("screen", sender);
           break;
         }
 
+        // 채팅방 활성화
         case "chat": {
           await handleChatEvent(msg);
           break;
@@ -407,6 +425,7 @@ const startScreenShare = async () => {
   }
 };
 
+// 화면 공유 중지
 const stopScreenShare = async () => {
   sharing.value = false;
   screenTargets.clear();

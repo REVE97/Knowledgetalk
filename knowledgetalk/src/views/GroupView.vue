@@ -82,7 +82,6 @@ const cpCode = "KP-20200101-01";
 const authKey =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoi64Kg66as7KeA7Y-s7J247Yq4IiwibWF4VXNlciI6IjUwMDAwMDAwIiwic3RhcnREYXRlIjoiMjAyMC0wMS0wMVQwNjo0NzowMC4wMDBaIiwiZW5kRGF0ZSI6IjIwMzAtMTItMzFUMDY6NDc6MDAuMDAwWiIsImF1dGhDb2RlIjoiS1AtMjAyMDAxMDEtMDEiLCJjb21wYW55Q29kZSI6IkxJQy0wMSIsImlhdCI6MTU4NzUzODExNH0.73A0UiiMHJeIS8pIgoN4DfEWT4QCsMnXkO4uUdnfbYI";
 
-
 // 변수 상태관리
 const roomId = ref("");
 const ready = ref(false);
@@ -91,25 +90,25 @@ const creating = ref(false);
 const joining = ref(false);
 const sharing = ref(false);
 
-const peerIds = ref([]); 
-const logs = ref([]);
+const peerIds = ref([]); // 화면에 카드를 만들기 위한 ID 리스트
+const logs = ref([]); // 로그
 
-let kt = null;
+let kt = null; // Knowledgetalk SDK 객체를 담을 변수
 let presenceHandler = null;
 
 let localCamStream = null;
 let localScreenStream = null;
 
-let publishedCamOnce = false;
+let publishedCamOnce = false; // 자신의 캠은 한번만 선언
 
 // Group: feeds 기반 subscribeVideo 중복 방지 -> cam / screen 나누기 위해 
 const subscribed = new Set();
 
 // 채팅 관련 상수
 const chatMessage = ref("");
-const chatMessages = ref([]); // { user, message, mine }
+const chatMessages = ref([]); 
 const chatListEl = ref(null);
-const isComposing = ref(false);
+const isComposing = ref(false); // IME 조합 체크
 
 const pushLog = (type, obj) => {
   const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
@@ -192,6 +191,7 @@ const handleChatEvent = async (msg) => {
   await scrollChatToBottom();
 };
 
+// startLocalCamIFNeeded -> 로컬 스트림 확보
 const startLocalCamIfNeeded = async () => {
   if (localCamStream) return localCamStream;
 
@@ -205,6 +205,7 @@ const startLocalCamIfNeeded = async () => {
   return localCamStream;
 };
 
+// publishVideo -> 캠 송출 / 수신 
 const publishMyCamIfNeeded = async () => {
   if (!joined.value || publishedCamOnce) return;
 
@@ -225,7 +226,7 @@ const subscribeFeed = async (feed) => {
 
   try {
     const stream = await kt.subscribeVideo(feed.id, feed.type);
-    await setStream(feed.type, feed.id, stream); // ✅ cam/screen 통일 처리
+    await setStream(feed.type, feed.id, stream); 
   } catch (e) {
     subscribed.delete(key);
     console.error("subscribeVideo failed", feed, e);
@@ -241,6 +242,7 @@ onMounted(async () => {
     if (initRes.code !== "200") return alert("init failed!");
     ready.value = true;
 
+    // 각 이벤트 발생 처리 함수
     presenceHandler = async (event) => {
       const msg = event.detail;
       pushLog("receive", msg);

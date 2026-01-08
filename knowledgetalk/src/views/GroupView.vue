@@ -1,18 +1,14 @@
+
 <template>
   <section>
     <div id="roomButton">
-      <input
-        id="roomIdInput"
-        v-model.trim="roomId"
-        type="text"
-        placeholder="room id"
-      />
+      <input id="roomIdInput" v-model="roomId" type="text" placeholder="room id" />
 
       <button :disabled="!ready || creating || joined" @click="createVideoRoom">
         CreateVideoRoom
       </button>
 
-      <button :disabled="!ready || joining || joined" @click="joinRoom()">
+      <button :disabled="!ready || joining || joined" @click="joinRoom">
         JoinRoom
       </button>
 
@@ -41,6 +37,34 @@
             <canvas :id="`screenCanvas-${id}`" class="screenCanvas"></canvas>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ✅ 채팅창: joined 이후에만 표시, 전송버튼 없음(Enter 전송), roomId 출력 없음 -->
+    <div v-if="joined" id="chatBox">
+      <div class="chatList" ref="chatListEl">
+        <div style="font-family: Arial, Helvetica, sans-serif;">CHATBOX</div>
+        <div
+          v-for="(m, i) in chatMessages"
+          :key="i"
+          class="chatItem"
+          :class="{ mine: m.mine }"
+        >
+          <div class="chatMeta">{{ m.user }}</div>
+          <div class="chatBubble">{{ m.message }}</div>
+        </div>
+      </div>
+
+      <div class="chatInputRow">
+        <input
+          class="chatInput"
+          v-model="chatMessage"
+          type="text"
+          placeholder="메시지를 입력하고 Enter로 전송"
+          @compositionstart="isComposing = true"
+          @compositionend="isComposing = false"
+          @keydown.enter.prevent="onEnterSend"
+        />
       </div>
     </div>
 
@@ -81,7 +105,45 @@ let localScreenStream = null;
 
 let publishedCamOnce = false;
 
+// Group: feeds 기반으로 subscribeVideo 중복 방지 (cam:xxx / screen:xxx)
 const subscribed = new Set();
+
+/** ✅ Chat */
+const chatMessage = ref("");
+const chatMessages = ref([]); // { user, message, mine }
+const chatListEl = ref(null);
+const isComposing = ref(false);
+
+const scrollChatToBottom = async () => {
+  await nextTick();
+  const el = chatListEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+};
+
+const onEnterSend = () => {
+  if (isComposing.value) return; // ✅ IME 조합 중 Enter 전송 방지
+  sendChat();
+};
+
+const sendChat = async () => {
+  const msg = (chatMessage.value || "").trim(); // ✅ 전송시에만 trim
+  if (!msg) return;
+  if (!joined.value) return;
+
+  const rid = kt?.getRoomId?.() || roomId.value.trim();
+  if (!rid) return;
+
+  const res = await kt.chat(msg, rid);
+  if (res?.code !== "200") {
+    alert("chat failed!");
+    return;
+  }
+
+  const me = kt.getUserId();
+  chatMessages.value.push({ user: me, message: msg, mine: true });
+  chatMessage.value = "";
+  await scrollChatToBottom();
+};
 
 const log = (type, obj) => {
   const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
@@ -103,8 +165,7 @@ const setCamStream = async (id, stream) => {
   ensureUser(id);
   await nextTick();
   const el = document.getElementById(`camVideo-${id}`);
-  if (!el) return;
-  el.srcObject = stream;
+  if (el) el.srcObject = stream;
 };
 
 const setScreenStream = async (id, stream) => {
@@ -112,6 +173,8 @@ const setScreenStream = async (id, stream) => {
   await nextTick();
   const el = document.getElementById(`screenVideo-${id}`);
   if (!el) return;
+  el.srcObject = null;
+  await nextTick();
   el.srcObject = stream;
 };
 
@@ -206,6 +269,7 @@ onMounted(async () => {
           break;
         }
 
+        // ✅ Group에서는 publish 이벤트에 cam/screen feed가 같이 오므로 screen type을 따로 처리할 필요가 거의 없음
         case "publish": {
           const feeds = msg.feeds || [];
           for (const feed of feeds) {
@@ -221,6 +285,19 @@ onMounted(async () => {
             subscribed.delete(`screen:${sender}`);
             await clearScreenVideo(sender);
           }
+          break;
+        }
+
+        case "chat": {
+          const sender = msg.user;
+          const text = msg.message;
+          const me = kt?.getUserId?.();
+
+          // 서버가 에코를 보내는 경우 중복 방지
+          if (sender === me) break;
+
+          chatMessages.value.push({ user: sender, message: text, mine: false });
+          await scrollChatToBottom();
           break;
         }
 
@@ -310,7 +387,6 @@ const startScreenShare = async () => {
     }
 
     localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-
     const [track] = localScreenStream.getVideoTracks();
     if (track) track.onended = () => stopScreenShare();
 
@@ -350,9 +426,12 @@ const stopScreenShare = async () => {
 </script>
 
 <style>
+/* =========================
+   공통 입력 / 버튼 영역
+========================= */
 #roomIdInput {
   padding: 10px;
-  width: 200px;
+  width: 220px;
   margin: 5px;
   border: 2px darkslategray solid;
   border-radius: 10px;
@@ -364,50 +443,140 @@ const stopScreenShare = async () => {
   gap: 6px;
 }
 
+/* =========================
+   비디오 카드 레이아웃
+========================= */
 #videoBox {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
+/* 사용자 카드 */
 .multiVideo {
   border: 1px solid #ddd;
   border-radius: 12px;
   padding: 10px;
 }
 
+/* 사용자 ID */
 .userLabel {
   margin: 0 0 8px;
   font-weight: 700;
 }
 
+/* CAM / SCREEN 2열 배치 */
 .videoRow {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 
+/* =========================
+   핵심: SCREEN 영역 레이아웃 고정
+========================= */
 .videoCol {
   position: relative;
+  overflow: hidden;            /* ✅ SDK가 canvas 여러 개 붙여도 높이 증가 차단 */
 }
 
+/* 섹션 라벨 */
 .subLabel {
   margin: 0 0 6px;
   font-size: 12px;
   opacity: 0.8;
 }
 
+/* 모든 video 기본 설정 */
 #videoBox video {
+  display: block;              /* ✅ inline baseline 여백 제거 */
   width: 100%;
+  border-radius: 10px;
   background: #000;
 }
 
-.screenCanvas {
+/* =========================
+   SCREEN video 높이 고정 (세로 확장 방지)
+========================= */
+video[id^="screenVideo-"] {
+  height: 320px;               /* ✅ 화면 공유 최대 출력 높이 */
+  max-height: 320px;
+  object-fit: contain;         /* 전체 화면 유지 (cover로 바꾸면 꽉 참) */
+}
+
+/* =========================
+   SCREEN 오버레이 캔버스
+   (SDK가 추가하는 canvas들도 전부 흡수)
+========================= */
+.videoCol canvas {
   position: absolute;
   left: 0;
-  top: 22px; 
+  top: 22px;                   /* subLabel 높이 */
   width: 100%;
   height: calc(100% - 22px);
   pointer-events: none;
 }
+
+/* =========================
+   채팅 UI
+========================= */
+#chatBox {
+  margin-top: 14px;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  padding: 10px;
+  width: 500px;
+}
+
+.chatList {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px;
+}
+
+.chatItem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.chatItem.mine {
+  align-items: flex-end;
+}
+
+.chatMeta {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+
+.chatBubble {
+  background: #f3f3f3;
+  border-radius: 10px;
+  padding: 8px 10px;
+  max-width: 85%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chatItem.mine .chatBubble {
+  background: #e9f3ff;
+}
+
+.chatInputRow {
+  margin-top: 10px;
+  display: flex;
+}
+
+.chatInput {
+  width: min(900px, 100%);
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+}
+
 </style>

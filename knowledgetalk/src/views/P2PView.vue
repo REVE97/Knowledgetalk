@@ -342,7 +342,7 @@ onMounted(async () => {
   }
 });
 
-// Mount 전에 실행되는 함수
+// 페이지가 종료될 때 실행
 onBeforeUnmount(() => {
   try {
     if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
@@ -381,7 +381,7 @@ const joinRoom = async (overrideRoomId) => {
     typeof overrideRoomId === "string" ? overrideRoomId.trim() : roomId.value.trim();
 
   if (!rid) {
-    const input = prompt("입장할 roomId를 입력하세요.");
+    const input = prompt("입장할 roomId를 입력하세요."); // 룸 아이디를 입력하지 않을 시 프롬프트 실행
     if (!input) return;
     rid = input.trim();
     roomId.value = rid;
@@ -396,8 +396,8 @@ const joinRoom = async (overrideRoomId) => {
 
     ensurePeer(kt.getUserId());
 
-    await startLocalCamIfNeeded();
-    await publishCamToAllInRoom(res);
+    await startLocalCamIfNeeded(); // 자신의 cam 스트림 확보
+    await publishCamToAllInRoom(res); // 내 cam 을 사용자에게 publish
   } finally {
     joining.value = false;
   }

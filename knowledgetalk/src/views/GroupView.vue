@@ -301,6 +301,7 @@ onMounted(async () => {
   }
 });
 
+// 페이지가 종료될 때 실행
 onBeforeUnmount(async () => {
   try {
     if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);

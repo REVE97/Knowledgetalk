@@ -134,7 +134,7 @@ const getVideoEl = (kind, id) =>
 
 const getCanvasEl = (id) => document.getElementById(`screenCanvas-${id}`) || undefined;
 
-// 스트림 설정
+// 스트림 설정 -> 데이터 변경 후 DOM 까지 업데이트가 완료된 후 콜백함수가 실행되도록 nextTick 함수 활용
 const setStream = async (kind, id, stream) => {
   ensurePeer(id);
   await nextTick();

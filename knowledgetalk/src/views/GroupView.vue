@@ -111,7 +111,7 @@ const chatListEl = ref(null);
 const isComposing = ref(false); // IME 조합 체크
 
 const pushLog = (type, obj) => {
-  const text = JSON.stringify(JSON.parse(JSON.stringify(obj)));
+  const text = JSON.stringify(obj)
   logs.value.push({ type, text });
 };
 

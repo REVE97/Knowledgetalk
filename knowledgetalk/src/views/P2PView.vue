@@ -78,6 +78,7 @@ function createKT() {
 }
 
 // KnowledgeTalk SDK 코드, 키값
+// Demo 버전 이기 때문에 따로 .env에 분리하지 않았음
 const cpCode = "KP-20200101-01";
 const authKey =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoi64Kg66as7KeA7Y-s7J247Yq4IiwibWF4VXNlciI6IjUwMDAwMDAwIiwic3RhcnREYXRlIjoiMjAyMC0wMS0wMVQwNjo0NzowMC4wMDBaIiwiZW5kRGF0ZSI6IjIwMzAtMTItMzFUMDY6NDc6MDAuMDAwWiIsImF1dGhDb2RlIjoiS1AtMjAyMDAxMDEtMDEiLCJjb21wYW55Q29kZSI6IkxJQy0wMSIsImlhdCI6MTU4NzUzODExNH0.73A0UiiMHJeIS8pIgoN4DfEWT4QCsMnXkO4uUdnfbYI";
@@ -128,7 +129,7 @@ const removePeer = (id) => {
   screenTargets.delete(id);
 };
 
-// CAM/SCREEN video DOM 찾기
+// CAM/SCREEN DOM 찾기
 const getVideoEl = (kind, id) =>
   document.getElementById(`${kind}Video-${id}`); 
 

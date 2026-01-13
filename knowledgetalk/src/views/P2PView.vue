@@ -123,26 +123,28 @@ const ensurePeer = (id) => {
 
 // peerid 에서 제거
 const removePeer = (id) => {
-  peerIds.value = peerIds.value.filter((x) => x !== id);
+  peerIds.value = peerIds.value.filter((x) => x !== id); // 해당 id만 제거
   publishedCamTargets.delete(id);
   screenTargets.delete(id);
 };
 
 // CAM/SCREEN video DOM 찾기
 const getVideoEl = (kind, id) =>
-  document.getElementById(`${kind === "cam" ? "camVideo" : "screenVideo"}-${id}`);
+  document.getElementById(`${kind}Video-${id}`); 
 
-const getCanvasEl = (id) => document.getElementById(`screenCanvas-${id}`) || undefined;
+const getCanvasEl = (id) => document.getElementById(`screenCanvas-${id}`);
 
-// 스트림 설정 -> 데이터 변경 후 DOM 까지 업데이트가 완료된 후 콜백함수가 실행되도록 nextTick 함수 활용
+// 스트림 설정 
+// 비동기 시에 데이터 변경 후 DOM 까지 업데이트가 완료된 후 콜백함수가 실행되도록 nextTick 함수 활용
 const setStream = async (kind, id, stream) => {
   ensurePeer(id);
   await nextTick();
+
   const el = getVideoEl(kind, id);
   if (!el) return;
 
+  if (el.srcObject === stream) return; 
   el.srcObject = null;
-  await nextTick();
   el.srcObject = stream;
 };
 
@@ -343,24 +345,17 @@ onMounted(async () => {
 });
 
 // 페이지가 종료될 때 실행
+const stopStream = (s) => {
+  if (!s) return null;
+  try { s.getTracks().forEach(t => t.stop()); } catch {}
+  return null;
+};
+
 onBeforeUnmount(() => {
-  try {
-    if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
-  } catch (_) {}
+  try { kt?.removeEventListener?.("presence", presenceHandler); } catch {}
 
-  try {
-    if (localCamStream) {
-      localCamStream.getTracks().forEach((t) => t.stop());
-      localCamStream = null;
-    }
-  } catch (_) {}
-
-  try {
-    if (localScreenStream) {
-      localScreenStream.getTracks().forEach((t) => t.stop());
-      localScreenStream = null;
-    }
-  } catch (_) {}
+  localCamStream = stopStream(localCamStream);
+  localScreenStream = stopStream(localScreenStream);
 });
 
 // 방 생성, 방 입장 SDK 객체

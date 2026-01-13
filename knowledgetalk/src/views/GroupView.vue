@@ -126,13 +126,11 @@ const removePeer = (id) => {
   subscribed.delete(`screen:${id}`);
 };
 
-const getVideoEl = (kind, id) =>
-  document.getElementById(`${kind === "cam" ? "camVideo" : "screenVideo"}-${id}`);
+const getVideoEl = (kind, id) => document.getElementById(`${kind}Video-${id}`);
 
 const getMyCanvas = () => {
   const me = kt?.getUserId?.();
-  if (!me) return undefined;
-  return document.getElementById(`screenCanvas-${me}`) || undefined;
+  return me ? document.getElementById(`screenCanvas-${me}`) : null;
 };
 
 const setStream = async (kind, id, stream) => {
@@ -142,8 +140,8 @@ const setStream = async (kind, id, stream) => {
   const el = getVideoEl(kind, id);
   if (!el) return;
 
+  if (el.srcObject === stream) return; 
   el.srcObject = null;
-  await nextTick();
   el.srcObject = stream;
 };
 
@@ -302,24 +300,17 @@ onMounted(async () => {
 });
 
 // 페이지가 종료될 때 실행
-onBeforeUnmount(async () => {
-  try {
-    if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
-  } catch (_) {}
+const stopStream = (s) => {
+  if (!s) return null;
+  try { s.getTracks().forEach(t => t.stop()); } catch {}
+  return null;
+};
 
-  try {
-    if (localCamStream) {
-      localCamStream.getTracks().forEach((t) => t.stop());
-      localCamStream = null;
-    }
-  } catch (_) {}
+onBeforeUnmount(() => {
+  try { if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler); } catch {}
 
-  try {
-    if (localScreenStream) {
-      localScreenStream.getTracks().forEach((t) => t.stop());
-      localScreenStream = null;
-    }
-  } catch (_) {}
+  localCamStream = stopStream(localCamStream);
+  localScreenStream = stopStream(localScreenStream);
 });
 
 // 방 생성, 방 입장 SDK 객체

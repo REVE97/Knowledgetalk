@@ -25,7 +25,6 @@
           <div class="videoCol">
             <p class="subLabel">SCREEN</p>
             <video :id="`screenVideo-${id}`" autoplay playsinline></video>
-            <canvas :id="`screenCanvas-${id}`" class="screenCanvas"></canvas>
           </div>
         </div>
       </div>
@@ -106,13 +105,13 @@ const screenTargets = new Set(); // 이미 화면 공유된 사용자 중복 방
 
 // 채팅 관련 상수
 const chatMessage = ref("");
-const chatMessages = ref([]); 
+const chatMessages = ref([]);
 const chatListEl = ref(null);
 const isComposing = ref(false); // IME 조합 체크
 
 // log 에 기록
 const pushLog = (type, obj) => {
-  const text = JSON.stringify(obj) 
+  const text = JSON.stringify(obj);
   logs.value.push({ type, text });
 };
 
@@ -124,19 +123,15 @@ const ensurePeer = (id) => {
 
 // peerid 에서 제거
 const removePeer = (id) => {
-  peerIds.value = peerIds.value.filter((x) => x !== id); // 해당 id만 제거
+  peerIds.value = peerIds.value.filter((x) => x !== id);
   publishedCamTargets.delete(id);
   screenTargets.delete(id);
 };
 
-// CAM/SCREEN DOM 찾기
-const getVideoEl = (kind, id) =>
-  document.getElementById(`${kind}Video-${id}`); 
+// CAM/SCREEN Video DOM 찾기
+const getVideoEl = (kind, id) => document.getElementById(`${kind}Video-${id}`);
 
-const getCanvasEl = (id) => document.getElementById(`screenCanvas-${id}`);
-
-// 스트림 설정 
-// 비동기 시에 데이터 변경 후 DOM 까지 업데이트가 완료된 후 콜백함수가 실행되도록 nextTick 함수 활용
+// 스트림 설정
 const setStream = async (kind, id, stream) => {
   ensurePeer(id);
   await nextTick();
@@ -144,7 +139,7 @@ const setStream = async (kind, id, stream) => {
   const el = getVideoEl(kind, id);
   if (!el) return;
 
-  if (el.srcObject === stream) return; 
+  if (el.srcObject === stream) return;
   el.srcObject = null;
   el.srcObject = stream;
 };
@@ -156,7 +151,7 @@ const clearStream = async (kind, id) => {
   if (el) el.srcObject = null;
 };
 
-// 채팅창이 항상 아래로 배치되게 
+// 채팅창이 항상 아래로 배치되게
 const scrollChatToBottom = async () => {
   await nextTick();
   const el = chatListEl.value;
@@ -165,13 +160,13 @@ const scrollChatToBottom = async () => {
 
 // 엔터키로 채팅 내용 전송
 const onEnterSend = () => {
-  if (isComposing.value) return; 
+  if (isComposing.value) return;
   sendChat();
 };
 
 // 채팅창에 채팅 내용 전송
 const sendChat = async () => {
-  const msg = (chatMessage.value || "").trim(); 
+  const msg = (chatMessage.value || "").trim();
   if (!msg || !joined.value) return;
 
   const rid = kt?.getRoomId?.() || roomId.value.trim();
@@ -204,7 +199,7 @@ const startLocalCamIfNeeded = async () => {
 
   localCamStream = await navigator.mediaDevices.getUserMedia({
     video: true,
-    audio: false
+    audio: false,
   });
 
   const me = kt.getUserId();
@@ -212,13 +207,13 @@ const startLocalCamIfNeeded = async () => {
   return localCamStream;
 };
 
-// publishP2P -> 캠 송출 / 수신 
+// publishP2P -> 캠 송출 / 수신
 const publishCamTo = async (targetId) => {
   const me = kt.getUserId();
   if (!joined.value || !targetId || targetId === me) return;
   if (publishedCamTargets.has(targetId)) return;
 
-  await startLocalCamIfNeeded(); 
+  await startLocalCamIfNeeded();
   await kt.publishP2P(targetId, "cam", localCamStream);
   publishedCamTargets.add(targetId);
 };
@@ -245,16 +240,15 @@ const startScreenStreamIfNeeded = async () => {
   return localScreenStream;
 };
 
-// 공유 화면 송출 시작
+// 공유 화면 송출 시작 (Canvas 미사용 버전)
 const screenStartTo = async (targetId) => {
   const me = kt.getUserId();
   if (!joined.value || !targetId || targetId === me) return;
   if (screenTargets.has(targetId)) return;
 
   const stream = await startScreenStreamIfNeeded();
-  const canvas = getCanvasEl(me);
 
-  const res = await kt.screenStart(stream, targetId, canvas);
+  const res = await kt.screenStart(stream, targetId);
   if (res?.code !== "200") return alert("screenStart failed!");
 
   screenTargets.add(targetId);
@@ -267,12 +261,12 @@ const screenStartToAll = async () => {
   }
 };
 
-// Mount 시에 실행되는 함수 
+// Mount 시에 실행되는 함수
 onMounted(async () => {
   try {
     kt = createKT();
 
-    // SDK의 Code 와 인증 키 값을 받아 초기화 -> 성공 : true , 실패 false 반환
+    // SDK의 Code 와 인증 키 값을 받아 초기화
     const initRes = await kt.init(cpCode, authKey);
     if (initRes.code !== "200") return alert("init failed!");
     ready.value = true;
@@ -283,7 +277,7 @@ onMounted(async () => {
       pushLog("receive", msg);
 
       switch (msg.type) {
-        case "join": { // 방 입장
+        case "join": {
           const uid = msg?.user?.id || msg?.user?.userId || msg?.user;
           if (!uid) break;
 
@@ -294,7 +288,7 @@ onMounted(async () => {
           break;
         }
 
-        case "leave": { // 방 나감
+        case "leave": {
           const uid =
             typeof msg.user === "string"
               ? msg.user
@@ -307,7 +301,6 @@ onMounted(async () => {
           break;
         }
 
-        // cam 값 true/false 로 카메라 구분
         case "subscribed": {
           if (msg.cam) {
             const stream = kt.getStream(msg.user);
@@ -320,14 +313,12 @@ onMounted(async () => {
           break;
         }
 
-        // 공유 종료 이벤트
         case "shareStop": {
           const sender = msg.sender || msg.user;
           if (sender) await clearStream("screen", sender);
           break;
         }
 
-        // 채팅방 활성화
         case "chat": {
           await handleChatEvent(msg);
           break;
@@ -348,12 +339,16 @@ onMounted(async () => {
 // 페이지가 종료될 때 실행
 const stopStream = (s) => {
   if (!s) return null;
-  try { s.getTracks().forEach(t => t.stop()); } catch {}
+  try {
+    s.getTracks().forEach((t) => t.stop());
+  } catch {}
   return null;
 };
 
 onBeforeUnmount(() => {
-  try { kt?.removeEventListener?.("presence", presenceHandler); } catch {}
+  try {
+    kt?.removeEventListener?.("presence", presenceHandler);
+  } catch {}
 
   localCamStream = stopStream(localCamStream);
   localScreenStream = stopStream(localScreenStream);
@@ -377,7 +372,7 @@ const joinRoom = async (overrideRoomId) => {
     typeof overrideRoomId === "string" ? overrideRoomId.trim() : roomId.value.trim();
 
   if (!rid) {
-    const input = prompt("입장할 roomId를 입력하세요."); // 룸 아이디를 입력하지 않을 시 프롬프트 실행
+    const input = prompt("입장할 roomId를 입력하세요.");
     if (!input) return;
     rid = input.trim();
     roomId.value = rid;
@@ -392,8 +387,8 @@ const joinRoom = async (overrideRoomId) => {
 
     ensurePeer(kt.getUserId());
 
-    await startLocalCamIfNeeded(); // 자신의 cam 스트림 확보
-    await publishCamToAllInRoom(res); // 내 cam 을 사용자에게 publish
+    await startLocalCamIfNeeded();
+    await publishCamToAllInRoom(res);
   } finally {
     joining.value = false;
   }
@@ -492,14 +487,6 @@ video[id^="screenVideo-"] {
   height: 320px;
   max-height: 320px;
   object-fit: contain;
-}
-.videoCol canvas {
-  position: absolute;
-  left: 0;
-  top: 22px;
-  width: 100%;
-  height: calc(100% - 22px);
-  pointer-events: none;
 }
 
 /* 채팅방 CSS */

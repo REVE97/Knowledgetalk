@@ -4,11 +4,19 @@
     <div id="roomButton">
       <input id="roomIdInput" v-model="roomId" type="text" placeholder="room id" />
 
-      <button :disabled="!ready || creating || joined" @click="createVideoRoom">CreateVideoRoom</button>
-      <button :disabled="!ready || joining || joined" @click="joinRoom()">JoinRoom</button>
+      <button :disabled="!ready || creating || joined" @click="createVideoRoom">
+        CreateVideoRoom
+      </button>
+      <button :disabled="!ready || joining || joined" @click="joinRoom()">
+        JoinRoom
+      </button>
 
-      <button :disabled="!ready || !joined || sharing" @click="startScreenShare">화면 공유</button>
-      <button :disabled="!ready || !joined || !sharing" @click="stopScreenShare">공유 종료</button>
+      <button :disabled="!ready || !joined || sharing" @click="startScreenShare">
+        화면 공유
+      </button>
+      <button :disabled="!ready || !joined || !sharing" @click="stopScreenShare">
+        공유 종료
+      </button>
     </div>
 
     <!-- 웹캠 화면 , 화면 공유 화면 -->
@@ -25,7 +33,6 @@
           <div class="videoCol">
             <p class="subLabel">SCREEN</p>
             <video :id="`screenVideo-${id}`" autoplay playsinline></video>
-            <canvas :id="`screenCanvas-${id}`" class="screenCanvas"></canvas>
           </div>
         </div>
       </div>
@@ -102,17 +109,17 @@ let localScreenStream = null;
 
 let publishedCamOnce = false; // 자신의 캠은 한번만 선언
 
-// Group: feeds 기반 subscribeVideo 중복 방지 -> cam / screen 나누기 위해 
+// Group: feeds 기반 subscribeVideo 중복 방지 -> cam / screen 나누기 위해
 const subscribed = new Set();
 
 // 채팅 관련 상수
 const chatMessage = ref("");
-const chatMessages = ref([]); 
+const chatMessages = ref([]);
 const chatListEl = ref(null);
 const isComposing = ref(false); // IME 조합 체크
 
 const pushLog = (type, obj) => {
-  const text = JSON.stringify(obj)
+  const text = JSON.stringify(obj);
   logs.value.push({ type, text });
 };
 
@@ -129,11 +136,6 @@ const removePeer = (id) => {
 
 const getVideoEl = (kind, id) => document.getElementById(`${kind}Video-${id}`);
 
-const getMyCanvas = () => {
-  const me = kt?.getUserId?.();
-  return me ? document.getElementById(`screenCanvas-${me}`) : null;
-};
-
 const setStream = async (kind, id, stream) => {
   ensurePeer(id);
   await nextTick();
@@ -141,7 +143,7 @@ const setStream = async (kind, id, stream) => {
   const el = getVideoEl(kind, id);
   if (!el) return;
 
-  if (el.srcObject === stream) return; 
+  if (el.srcObject === stream) return;
   el.srcObject = null;
   el.srcObject = stream;
 };
@@ -184,19 +186,19 @@ const handleChatEvent = async (msg) => {
   const text = msg.message;
   const me = kt?.getUserId?.();
 
-  if (sender === me) return; 
+  if (sender === me) return;
 
   chatMessages.value.push({ user: sender, message: text, mine: false });
   await scrollChatToBottom();
 };
 
-// startLocalCamIFNeeded -> 로컬 스트림 확보
+// startLocalCamIfNeeded -> 로컬 스트림 확보
 const startLocalCamIfNeeded = async () => {
   if (localCamStream) return localCamStream;
 
   localCamStream = await navigator.mediaDevices.getUserMedia({
     video: { width: 640, height: 380 },
-    audio: false
+    audio: false,
   });
 
   const me = kt.getUserId();
@@ -204,7 +206,7 @@ const startLocalCamIfNeeded = async () => {
   return localCamStream;
 };
 
-// publishVideo -> 캠 송출 / 수신 
+// publishVideo -> 캠 송출 / 수신
 const publishMyCamIfNeeded = async () => {
   if (!joined.value || publishedCamOnce) return;
 
@@ -225,13 +227,12 @@ const subscribeFeed = async (feed) => {
 
   try {
     const stream = await kt.subscribeVideo(feed.id, feed.type);
-    await setStream(feed.type, feed.id, stream); 
+    await setStream(feed.type, feed.id, stream);
   } catch (e) {
     subscribed.delete(key);
     console.error("subscribeVideo failed", feed, e);
   }
 };
-
 
 onMounted(async () => {
   try {
@@ -265,6 +266,7 @@ onMounted(async () => {
           await clearStream("screen", uid);
           break;
         }
+
         case "publish": {
           const feeds = msg.feeds || [];
           for (const feed of feeds) {
@@ -303,12 +305,16 @@ onMounted(async () => {
 // 페이지가 종료될 때 실행
 const stopStream = (s) => {
   if (!s) return null;
-  try { s.getTracks().forEach(t => t.stop()); } catch {}
+  try {
+    s.getTracks().forEach((t) => t.stop());
+  } catch {}
   return null;
 };
 
 onBeforeUnmount(() => {
-  try { if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler); } catch {}
+  try {
+    if (kt && presenceHandler) kt.removeEventListener("presence", presenceHandler);
+  } catch {}
 
   localCamStream = stopStream(localCamStream);
   localScreenStream = stopStream(localScreenStream);
@@ -373,8 +379,7 @@ const startScreenShare = async () => {
     const me = kt.getUserId();
     await setStream("screen", me, localScreenStream);
 
-    const canvas = getMyCanvas();
-    const res = await kt.screenStart(localScreenStream, undefined, canvas);
+    const res = await kt.screenStart(localScreenStream, undefined);
     if (res?.code !== "200") {
       sharing.value = false;
       alert("screenStart failed!");
@@ -458,14 +463,6 @@ video[id^="screenVideo-"] {
   height: 320px;
   max-height: 320px;
   object-fit: contain;
-}
-.videoCol canvas {
-  position: absolute;
-  left: 0;
-  top: 22px;
-  width: 100%;
-  height: calc(100% - 22px);
-  pointer-events: none;
 }
 
 /* 채팅방 CSS */

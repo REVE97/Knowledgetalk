@@ -151,7 +151,7 @@ const clearStream = async (kind, id) => {
   if (el) el.srcObject = null;
 };
 
-// 채팅창이 항상 아래로 배치되게
+// 채팅창이 항상 아래로 배치
 const scrollChatToBottom = async () => {
   await nextTick();
   const el = chatListEl.value;
@@ -227,7 +227,7 @@ const publishCamToAllInRoom = async (roomData) => {
   }
 };
 
-// getDisplayMedia -> 로컬 화면 스트림 확보
+// 로컬 화면 스트림 확보
 const startScreenStreamIfNeeded = async () => {
   if (localScreenStream) return localScreenStream;
 
@@ -240,7 +240,7 @@ const startScreenStreamIfNeeded = async () => {
   return localScreenStream;
 };
 
-// 공유 화면 송출 시작 (Canvas 미사용 버전)
+// 공유 화면 송출 시작
 const screenStartTo = async (targetId) => {
   const me = kt.getUserId();
   if (!joined.value || !targetId || targetId === me) return;
@@ -266,11 +266,13 @@ onMounted(async () => {
   try {
     kt = createKT();
 
-    // SDK의 Code 와 인증 키 값을 받아 초기화
+    // SDK의 Code 와 인증 키 값을 받아 초기화 -> SDK 정상적으로 작동하면 ready = true
     const initRes = await kt.init(cpCode, authKey);
-    if (initRes.code !== "200") return alert("init failed!");
-    ready.value = true;
 
+    if (initRes.code !== "200") return alert("init failed!");
+
+    ready.value = true;
+  
     // 각 이벤트 발생 처리 함수
     presenceHandler = async (e) => {
       const msg = e.detail;
@@ -354,7 +356,7 @@ onBeforeUnmount(() => {
   localScreenStream = stopStream(localScreenStream);
 });
 
-// 방 생성, 방 입장 SDK 객체
+// 방 생성 함수 + 자동 join 
 const createRoom = async () => {
   creating.value = true;
   try {
@@ -367,10 +369,12 @@ const createRoom = async () => {
   }
 };
 
+// 방 입장 함수
 const joinRoom = async (overrideRoomId) => {
   let rid =
     typeof overrideRoomId === "string" ? overrideRoomId.trim() : roomId.value.trim();
 
+  // roomid 를 입력하지 않았을때 프롬프트 실행하여 입력
   if (!rid) {
     const input = prompt("입장할 roomId를 입력하세요.");
     if (!input) return;
@@ -394,7 +398,7 @@ const joinRoom = async (overrideRoomId) => {
   }
 };
 
-// 화면 공유 SDK 객체
+// 화면 공유 함수
 const startScreenShare = async () => {
   try {
     sharing.value = true;
@@ -416,7 +420,7 @@ const startScreenShare = async () => {
   }
 };
 
-// 화면 공유 중지
+// 화면 공유 중지 함수
 const stopScreenShare = async () => {
   sharing.value = false;
   screenTargets.clear();
